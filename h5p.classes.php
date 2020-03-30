@@ -518,12 +518,12 @@ interface H5PFrameworkInterface {
 
   /**
    * Will clear filtered params for all the content that uses the specified
-   * library. This means that the content dependencies will have to be rebuilt,
+   * libraries. This means that the content dependencies will have to be rebuilt,
    * and the parameters re-filtered.
    *
-   * @param int $library_id
+   * @param array $library_ids
    */
-  public function clearFilteredParameters($library_id);
+  public function clearFilteredParameters($library_ids);
 
   /**
    * Get number of contents that has to get their content dependencies rebuilt
@@ -864,7 +864,7 @@ class H5PValidator {
         $valid = FALSE;
       }
       else {
-        $mainH5pData = $this->getJson($tmpPath, $zip, 'h5p.json');
+        $mainH5pData = $this->getJson($tmpPath, $zip, 'h5p.json', TRUE);
         if ($mainH5pData === NULL) {
           return FALSE; // Breaking error when reading from the archive.
         }
@@ -933,7 +933,7 @@ class H5PValidator {
       // Process and validate libraries using the unpacked library folders
       $files = scandir($tmpDir);
       foreach ($files as $file) {
-        $filePath = $tmpDir . DIRECTORY_SEPARATOR . $file;
+        $filePath = $tmpDir . '/' . $file;
 
         if ($file === '.' || $file === '..' || $file === 'content' || !is_dir($filePath)) {
           continue; // Skip
@@ -1006,28 +1006,29 @@ class H5PValidator {
       if (!empty($missingLibraries)) {
         // We still have missing libraries, check if our main library has an upgrade (BUT only if we has content)
         $mainDependency = NULL;
-        if (!$skipContent && !empty($mainH5PData)) {
-          foreach ($mainH5PData['preloadedDependencies'] as $dep) {
-            if ($dep['machineName'] === $mainH5PData['mainLibrary']) {
+        if (!$skipContent && !empty($mainH5pData)) {
+          foreach ($mainH5pData['preloadedDependencies'] as $dep) {
+            if ($dep['machineName'] === $mainH5pData['mainLibrary']) {
               $mainDependency = $dep;
             }
           }
         }
 
         if ($skipContent || !$mainDependency || !$this->h5pF->libraryHasUpgrade(array(
-              'machineName' => $mainDependency['mainLibrary'],
+              'machineName' => $mainDependency['machineName'],
               'majorVersion' => $mainDependency['majorVersion'],
               'minorVersion' => $mainDependency['minorVersion']
             ))) {
           foreach ($missingLibraries as $libString => $library) {
             $this->h5pF->setErrorMessage($this->h5pF->t('Missing required library @library', array('@library' => $libString)), 'missing-required-library');
+            $valid = FALSE;
           }
           if (!$this->h5pC->mayUpdateLibraries()) {
             $this->h5pF->setInfoMessage($this->h5pF->t("Note that the libraries may exist in the file you uploaded, but you're not allowed to upload new libraries. Contact the site administrator about this."));
+            $valid = FALSE;
           }
         }
       }
-      $valid = empty($missingLibraries) && $valid;
     }
     if (!$valid) {
       H5PCore::deleteFileTree($tmpDir);
@@ -1043,7 +1044,7 @@ class H5PValidator {
    * @param string $file
    * @return mixed JSON content if valid, FALSE for invalid, NULL for breaking error.
    */
-  private function getJson($path, $zip, $file) {
+  private function getJson($path, $zip, $file, $assoc = FALSE) {
     // Get stream
     $stream = $zip->getStream($file);
     if (!$stream) {
@@ -1061,7 +1062,7 @@ class H5PValidator {
     }
 
     // Decode the data
-    $json = json_decode($contents, TRUE);
+    $json = json_decode($contents, $assoc);
     if ($json === NULL) {
       // JSON cannot be decoded or the recursion limit has been reached.
       $this->h5pF->setErrorMessage($this->h5pF->t('Unable to parse JSON from the package: %fileName', array('%fileName' => $file)), 'unable-to-parse-package');
@@ -1101,14 +1102,14 @@ class H5PValidator {
       $this->h5pF->setErrorMessage($this->h5pF->t('Invalid library name: %name', array('%name' => $file)), 'invalid-library-name');
       return FALSE;
     }
-    $h5pData = $this->getJsonData($filePath . DIRECTORY_SEPARATOR . 'library.json');
+    $h5pData = $this->getJsonData($filePath . '/' . 'library.json');
     if ($h5pData === FALSE) {
       $this->h5pF->setErrorMessage($this->h5pF->t('Could not find library.json file with valid json format for library %name', array('%name' => $file)), 'invalid-library-json-file');
       return FALSE;
     }
 
     // validate json if a semantics file is provided
-    $semanticsPath = $filePath . DIRECTORY_SEPARATOR . 'semantics.json';
+    $semanticsPath = $filePath . '/' . 'semantics.json';
     if (file_exists($semanticsPath)) {
       $semantics = $this->getJsonData($semanticsPath, TRUE);
       if ($semantics === FALSE) {
@@ -1121,7 +1122,7 @@ class H5PValidator {
     }
 
     // validate language folder if it exists
-    $languagePath = $filePath . DIRECTORY_SEPARATOR . 'language';
+    $languagePath = $filePath . '/' . 'language';
     if (is_dir($languagePath)) {
       $languageFiles = scandir($languagePath);
       foreach ($languageFiles as $languageFile) {
@@ -1132,7 +1133,7 @@ class H5PValidator {
           $this->h5pF->setErrorMessage($this->h5pF->t('Invalid language file %file in library %library', array('%file' => $languageFile, '%library' => $file)), 'invalid-language-file');
           return FALSE;
         }
-        $languageJson = $this->getJsonData($languagePath . DIRECTORY_SEPARATOR . $languageFile, TRUE);
+        $languageJson = $this->getJsonData($languagePath . '/' . $languageFile, TRUE);
         if ($languageJson === FALSE) {
           $this->h5pF->setErrorMessage($this->h5pF->t('Invalid language file %languageFile has been included in the library %name', array('%languageFile' => $languageFile, '%name' => $file)), 'invalid-language-file');
           return FALSE;
@@ -1143,7 +1144,7 @@ class H5PValidator {
     }
 
     // Check for icon:
-    $h5pData['hasIcon'] = file_exists($filePath . DIRECTORY_SEPARATOR . 'icon.svg');
+    $h5pData['hasIcon'] = file_exists($filePath . '/' . 'icon.svg');
 
     $validLibrary = $this->isValidH5pData($h5pData, $file, $this->libraryRequired, $this->libraryOptional);
 
@@ -1227,8 +1228,8 @@ class H5PValidator {
    */
   private function isExistingFiles($files, $tmpDir, $library) {
     foreach ($files as $file) {
-      $path = str_replace(array('/', '\\'), DIRECTORY_SEPARATOR, $file['path']);
-      if (!file_exists($tmpDir . DIRECTORY_SEPARATOR . $library . DIRECTORY_SEPARATOR . $path)) {
+      $path = str_replace(array('/', '\\'), '/', $file['path']);
+      if (!file_exists($tmpDir . '/' . $library . '/' . $path)) {
         $this->h5pF->setErrorMessage($this->h5pF->t('The file "%file" is missing from library: "%name"', array('%file' => $path, '%name' => $library)), 'library-missing-file');
         return FALSE;
       }
@@ -1519,7 +1520,7 @@ class H5PStorage {
 
     if (!$skipContent) {
       $basePath = $this->h5pF->getUploadedH5pFolderPath();
-      $current_path = $basePath . DIRECTORY_SEPARATOR . 'content';
+      $current_path = $basePath . '/' . 'content';
 
       // Save content
       if ($content === NULL) {
@@ -1538,7 +1539,7 @@ class H5PStorage {
         }
       }
 
-      $content['params'] = file_get_contents($current_path . DIRECTORY_SEPARATOR . 'content.json');
+      $content['params'] = file_get_contents($current_path . '/' . 'content.json');
 
       if (isset($options['disable'])) {
         $content['disable'] = $options['disable'];
@@ -1622,6 +1623,7 @@ class H5PStorage {
     }
 
     // Go through the libraries again to save dependencies.
+    $library_ids = [];
     foreach ($this->h5pC->librariesJsonData as &$library) {
       if (!$library['saveDependencies']) {
         continue;
@@ -1643,8 +1645,12 @@ class H5PStorage {
         $this->h5pF->saveLibraryDependencies($library['libraryId'], $library['editorDependencies'], 'editor');
       }
 
-      // Make sure libraries dependencies, parameter filtering and export files gets regenerated for all content who uses this library.
-      $this->h5pF->clearFilteredParameters($library['libraryId']);
+      $library_ids[] = $library['libraryId'];
+    }
+
+    // Make sure libraries dependencies, parameter filtering and export files gets regenerated for all content who uses these libraries.
+    if (!empty($library_ids)) {
+      $this->h5pF->clearFilteredParameters($library_ids);
     }
 
     // Tell the user what we've done.
@@ -1782,7 +1788,7 @@ Class H5PExport {
     }
 
     // Update content.json with content from database
-    file_put_contents("{$tmpPath}/content/content.json", $content['params']);
+    file_put_contents("{$tmpPath}/content/content.json", $content['filtered']);
 
     // Make embedType into an array
     $embedTypes = explode(', ', $content['embedType']);
@@ -1910,7 +1916,7 @@ Class H5PExport {
    */
   private static function populateFileList($dir, &$files, $relative = '') {
     $strip = strlen($dir) + 1;
-    $contents = glob($dir . DIRECTORY_SEPARATOR . '*');
+    $contents = glob($dir . '/' . '*');
     if (!empty($contents)) {
       foreach ($contents as $file) {
         $rel = $relative . substr($file, $strip);
@@ -1992,7 +1998,7 @@ class H5PCore {
 
   public static $coreApi = array(
     'majorVersion' => 1,
-    'minorVersion' => 21
+    'minorVersion' => 24
   );
   public static $styles = array(
     'styles/h5p.css',
@@ -2204,6 +2210,7 @@ class H5PCore {
       if ($this->exportEnabled) {
         // Recreate export file
         $exporter = new H5PExport($this->h5pF, $this);
+        $content['filtered'] = $params;
         $exporter->createExportFile($content);
       }
 
@@ -2425,7 +2432,7 @@ class H5PCore {
     // Using content dependencies
     foreach ($dependencies as $dependency) {
       if (isset($dependency['path']) === FALSE) {
-        $dependency['path'] = 'libraries/' . H5PCore::libraryToString($dependency, TRUE);
+        $dependency['path'] = $this->getDependencyPath($dependency);
         $dependency['preloadedJs'] = explode(',', $dependency['preloadedJs']);
         $dependency['preloadedCss'] = explode(',', $dependency['preloadedCss']);
       }
@@ -2443,6 +2450,16 @@ class H5PCore {
     }
 
     return $files;
+  }
+
+  /**
+   * Get the path to the dependency.
+   *
+   * @param array $dependency
+   * @return string
+   */
+  protected function getDependencyPath(array $dependency) {
+    return 'libraries/' . H5PCore::libraryToString($dependency, TRUE);
   }
 
   private static function getDependenciesHash(&$dependencies) {
@@ -2737,7 +2754,7 @@ class H5PCore {
     foreach ($arr as $key => $val) {
       $next = -1;
       while (($next = strpos($key, '_', $next + 1)) !== FALSE) {
-        $key = substr_replace($key, strtoupper($key{$next + 1}), $next, 2);
+        $key = substr_replace($key, strtoupper($key[$next + 1]), $next, 2);
       }
 
       $newArr[$key] = $val;
@@ -3483,6 +3500,11 @@ class H5PCore {
       'connectionLost' => $this->h5pF->t('Connection lost. Results will be stored and sent when you regain connection.'),
       'connectionReestablished' => $this->h5pF->t('Connection reestablished.'),
       'resubmitScores' => $this->h5pF->t('Attempting to submit stored results.'),
+      'offlineDialogHeader' => $this->h5pF->t('Your connection to the server was lost'),
+      'offlineDialogBody' => $this->h5pF->t('We were unable to send information about your completion of this task. Please check your internet connection.'),
+      'offlineDialogRetryMessage' => $this->h5pF->t('Retrying in :num....'),
+      'offlineDialogRetryButtonLabel' => $this->h5pF->t('Retry now'),
+      'offlineSuccessfulSubmit' => $this->h5pF->t('Successfully submitted results.'),
     );
   }
 }
@@ -3689,7 +3711,7 @@ class H5PContentValidator {
     $wl_regex = '/\.(' . preg_replace('/ +/i', '|', preg_quote($whitelist)) . ')$/i';
 
     foreach ($files as $file) {
-      $filePath = $contentPath . DIRECTORY_SEPARATOR . $file;
+      $filePath = $contentPath . '/' . $file;
       if (is_dir($filePath)) {
         $valid = $this->validateContentFiles($filePath, $isLibrary) && $valid;
       }
@@ -3892,6 +3914,10 @@ class H5PContentValidator {
       $file->codecs = htmlspecialchars($file->codecs, ENT_QUOTES, 'UTF-8', FALSE);
     }
 
+    if (isset($file->bitrate)) {
+      $file->bitrate = intval($file->bitrate);
+    }
+
     if (isset($file->quality)) {
       if (!is_object($file->quality) || !isset($file->quality->level) || !isset($file->quality->label)) {
         unset($file->quality);
@@ -3933,7 +3959,7 @@ class H5PContentValidator {
    */
   public function validateVideo(&$video, $semantics) {
     foreach ($video as &$variant) {
-      $this->_validateFilelike($variant, $semantics, array('width', 'height', 'codecs', 'quality'));
+      $this->_validateFilelike($variant, $semantics, array('width', 'height', 'codecs', 'quality', 'bitrate'));
     }
   }
 
@@ -4007,20 +4033,6 @@ class H5PContentValidator {
           // not have a corresponding semantics field. Remove it.
           // $this->h5pF->setErrorMessage($this->h5pF->t('H5P internal error: no validator exists for @key', array('@key' => $key)));
           unset($group->$key);
-        }
-      }
-    }
-    if (!(isset($semantics->optional) && $semantics->optional)) {
-      if ($group === NULL) {
-        // Error no value. Errors aren't printed...
-        return;
-      }
-      foreach ($semantics->fields as $field) {
-        if (!(isset($field->optional) && $field->optional)) {
-          // Check if field is in group.
-          if (! property_exists($group, $field->name)) {
-            //$this->h5pF->setErrorMessage($this->h5pF->t('No value given for mandatory field ' . $field->name));
-          }
         }
       }
     }
